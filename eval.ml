@@ -1,19 +1,6 @@
+open Syntax
+
 (* ----- intExpr.ml ----- *)
-
-type intExpr_t =
-    | Plus of (intExpr_t * intTerm_t)
-    | Minus of (intExpr_t * intTerm_t)
-    | Term of intTerm_t
-
-and intTerm_t = 
-    | Times of (intTerm_t * intFactor_t)
-    | Devide of (intTerm_t * intFactor_t)
-    | Factor of intFactor_t
-
-and intFactor_t = 
-    | Expr of intExpr_t
-    | Int of int
-    | Variable of string
 
 let rec calcIntExpr intExpr = match intExpr with
     | Plus (expr, term) -> (match (calcIntExpr expr) with
@@ -48,21 +35,6 @@ and calcIntFactor intFactor = match intFactor with
 
 (* ----- boolExpr.ml ----- *)
 
-type intVariabel_t = 
-    | IntB of (int)
-    | VariableB of (string)
-
-type boolExpr_t =
-    | And of (boolExpr_t * boolExpr_t)
-    | Or of (boolExpr_t * boolExpr_t)
-    | Factor of (boolFactor_t)
-    | NegFactor of (boolFactor_t)
-
-and boolFactor_t =
-    | Bool of (bool)
-    | IntEq of (intVariabel_t * intVariabel_t)
-    (* 途中 *)
-
 let calcBoolFactor boolFactor = match boolFactor with
     | Bool (bool) -> bool
     | IntEq (intvariable1, intvariable2) -> (match intvariable1 with
@@ -79,22 +51,6 @@ let rec calcBoolExpr  boolExpr = match boolExpr with
     | NegFactor (boolFactor) -> not (calcBoolFactor boolFactor)
 
 (* ----- element.ml ----- *)
-type literal_t = 
-    | String of string
-    | Int of int
-    | Float of float
-    | Bool of bool
-    | IntExpr of intExpr_t
-    (* | FloatExpr of floatExpr_t *)
-    | BoolExpr of boolExpr_t
-
-type element_t =
-    | Literal of literal_t
-    | Variable of string
-    | Context of string
-    | Wrapping of element_t
-    | Multiset of element_t list
-    | Sequence of element_t list
 
 (* ----- apply.ml ----- *)
 
@@ -108,6 +64,12 @@ let rec getElementFromTheta theta element = match theta with
           Replace (element1, element2) -> if element = element1 then Some (element2)
             else getElementFromTheta rest element
         | Equal (element1, element2) -> getElementFromTheta rest element)
+
+let rec multisetSort prev next contexts = match next with
+    | [] -> prev @ contexts
+    | first :: rest -> (match first with
+        | Context (c) -> multisetSort prev rest (contexts @ [first])
+        | _ -> multisetSort (prev @ [first]) rest contexts)
 
 let rec subMatching data1 data2 theta = 
     match data1 with
@@ -123,16 +85,16 @@ let rec subMatching data1 data2 theta =
                         else None
                     | IntExpr (e2) -> Some ([Equal (l1, l2)])
                     | _ -> None)
-                | Float (f1) -> (match l2 with
+                (* | Float (f1) -> (match l2 with
                       Float (f2) -> if f1 = f2 then Some ([])
                         else None
                     (* | FloatExpr (e2) -> ... *)
-                    | _ -> None)
-                | Bool (b1) -> (match l2 with
+                    | _ -> None) *)
+                (* | Bool (b1) -> (match l2 with
                       Bool (b2) -> if b1 = b2 then Some([])
                         else None
                     (* | BoolExpr (e2) -> ... *)
-                    | _ -> None)
+                    | _ -> None) *)
                 | _ -> raise (Sys_error "subMatching"))
         | Variable (v2) -> (match getElementFromTheta theta (Variable (v2)) with
               Some (e) -> if (Literal (l1)) = e then Some ([])
@@ -264,17 +226,41 @@ and applyReplacesToBoolFactor boolFactor replaces = match boolFactor with
     | Bool (bool) -> Bool (bool)
     | IntEq (intvariable1, intvariable2) -> IntEq (applyReplacesToIntVariable intvariable1 replaces, applyReplacesToIntVariable intvariable2 replaces)
 
+let variableList = ref [""]
+
+let rec subGetIndexFromVariableList variable list index = match list with
+    | [] -> (variableList := !variableList @ variable :: []; string_of_int index)
+    | first :: rest ->
+        if variable = first then string_of_int index
+        else subGetIndexFromVariableList variable rest (index+1)
+
+let getIndexFromVariableList variable = subGetIndexFromVariableList variable !variableList (-1)
+
+let rec getIndexFromVariableListForSet set = match set with
+    | [] -> []
+    | first :: rest -> (match first with
+        | Variable (v) -> Variable(getIndexFromVariableList v) :: (getIndexFromVariableListForSet rest)
+        | _ -> first :: (getIndexFromVariableListForSet rest))
+
 let rec applyReplacesToElement element replaces = match element with
     | Literal (l) -> (match l with
-        | IntExpr (i) -> Literal (IntExpr (applyReplacesToIntExpr i replaces))
+        | IntExpr (i) -> 
+            let intResult = calcIntExpr (applyReplacesToIntExpr i replaces) in
+            (match intResult with
+                | Some (s) -> Literal (Int (s))
+                | None -> Literal (BoolExpr (Factor (Bool (false)))))
         (* | FloatExpr *)
-        | BoolExpr (b) -> Literal (BoolExpr (applyReplacesToBoolExpr b replaces))
+        | BoolExpr (b) -> 
+            let boolResult = calcBoolExpr (applyReplacesToBoolExpr b replaces) in
+            Literal (BoolExpr (Factor (Bool (boolResult))))
         | _ -> element)
     | Variable (v) ->
         let e = getElementFromReplaces replaces element in
         (match e with
-            | Some (s) -> s
-            | None -> element)
+            | Some (s) -> (match s with
+                | Variable (sv) -> Variable (getIndexFromVariableList sv)
+                | _ -> s)
+            | None -> Variable (getIndexFromVariableList v))
     | Context (c) -> raise (Sys_error "applyReplacesToElement")
     | Wrapping (w) -> Wrapping (applyReplacesToElement w replaces)
     | Multiset (m) -> Multiset (applyReplacesToSet m replaces)
@@ -288,13 +274,13 @@ and applyReplacesToSet multiset replaces =
             (match first with
                 | Context (c) -> (match e with
                     | Some (s) -> (match s with
-                        | Multiset (m) -> subApplyReplacesToSet (before @ m) rest replaces
-                        | Sequence (q) -> subApplyReplacesToSet (before @ q) rest replaces
+                        | Multiset (m) -> subApplyReplacesToSet (before @ (getIndexFromVariableListForSet m)) rest replaces
+                        | Sequence (q) -> subApplyReplacesToSet (before @ (getIndexFromVariableListForSet q)) rest replaces
                         | _ -> raise (Sys_error "applyReplacesToSet"))
                     | None -> raise (Sys_error "applyReplacesToSet"))
                 | _ -> (match e with
                     | Some (s) -> subApplyReplacesToSet (before @ s :: []) rest replaces
-                    | None -> subApplyReplacesToSet (before @ first :: []) rest replaces))
+                    | None -> subApplyReplacesToSet (before @ (applyReplacesToElement first replaces) :: []) rest replaces))
     in
     subApplyReplacesToSet [] multiset replaces
 
@@ -308,7 +294,7 @@ let rec checkEquals equals replaces = match equals with
             | None -> false)
         (* | floatExpr -> ... *)
         | BoolExpr (boolExpr) -> 
-            if l1 = Bool (calcBoolExpr (applyReplacesToBoolExpr boolExpr replaces)) then checkEquals rest replaces
+            if l1 = BoolExpr (Factor (Bool (calcBoolExpr (applyReplacesToBoolExpr boolExpr replaces)))) then checkEquals rest replaces
             else false
         | _ -> raise (Sys_error "checkEquals"))
 
@@ -341,18 +327,27 @@ let rec subDataMatching data1 data2 theta =
 
 let rec changeGuardToTheta theta guard = match guard with
     | [] -> theta
-    | first :: rest -> changeGuardToTheta (theta @ (Equal ((Bool (true)), first)) :: []) rest
+    | first :: rest -> changeGuardToTheta (theta @ (Equal (BoolExpr (Factor (Bool (true))), first)) :: []) rest
 
 let dataMatching data1 data2 guard = match data1 with
     | Multiset (m1) -> (match data2 with
-        | Multiset (m2) -> subDataMatching m1 m2 (changeGuardToTheta [] guard) (* ここでm2にデフォルトの文脈を追加する？ *)
+        | Multiset (m2) -> subDataMatching (multisetSort [] m1 []) (multisetSort [] m2 []) ([Equal (BoolExpr (Factor (Bool (true))), guard)])
         | _ -> raise (Sys_error "subSubSequenceMatching"))
     | _ -> raise (Sys_error "subSubSequenceMatching")
 
 let applyInstruction data head guard body =
-    let mutchingResult = dataMatching data head guard in
+    variableList := [""];
+    let newHead = match head with
+        | Multiset (h) -> Multiset ((Context "$") :: h)
+        | _ -> raise (Sys_error "applyInstruction")
+    in
+    let newBody = match body with
+        | Multiset (b) -> Multiset ((Context "$") :: b)
+        | _ -> raise (Sys_error "applyInstruction")
+    in
+    let mutchingResult = dataMatching data newHead guard in
     match mutchingResult with
-        | Some (replaces) -> (true, applyReplacesToElement body replaces)
+        | Some (replaces) -> (true, applyReplacesToElement newBody replaces)
         | None -> (false, data)
 
 (* ----- tests ----- *)
@@ -446,6 +441,6 @@ let test40 = testMatching (Multiset [(Literal (String "a")); (Literal (String "b
 (* {a,a} ? {@a,@a} *)
 let test41 = testMatching (Multiset [(Literal (String "a")); (Literal (String "a"))]) (Multiset [(Variable "a"); (Variable "a")]) = [Replace (Variable "a", Literal (String "a"))]
 (* 0 ? 2+1 *)
-let test42 = dataMatching (Multiset [Literal (Int (3))]) (Multiset [Literal (IntExpr (Plus ((Term (Factor (Int (2)))), (Factor (Int (1))))))]) [(BoolExpr (NegFactor (Bool (false))))] = Some ([])
+let test42 = dataMatching (Multiset [Literal (Int (3))]) (Multiset [Literal (IntExpr (Plus ((Term (Factor (Int (2)))), (Factor (Int (1))))))]) (BoolExpr (NegFactor (Bool (false)))) = Some ([])
 (* a ? @b -> @b,@b *)
-let test43 = applyInstruction (Multiset [(Literal (String ("a")))]) (Multiset [(Variable ("b")); (Context ("c"))]) [] (Multiset [(Variable ("b")); (Variable ("b"))]) = (true, Multiset [Literal (String "a"); Literal (String "a")])
+let test43 = applyInstruction (Multiset [(Literal (String ("a")))]) (Multiset [(Variable ("b")); (Context ("c"))]) (BoolExpr (Factor (Bool (true)))) (Multiset [(Variable ("b")); (Variable ("b"))]) = (true, Multiset [Literal (String "a"); Literal (String "a")])

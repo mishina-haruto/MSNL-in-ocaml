@@ -1,0 +1,24 @@
+#!/bin/bash
+ocamllex lexer.mll
+ocamlyacc parser.mly
+ocamlc -c syntax.ml
+ocamlc -c parser.mli
+ocamlc -c lexer.ml
+ocamlc -c parser.ml
+ocamlc -c eval.ml
+ocamlc -c main.ml
+ocamlc -o msnl lexer.cmo parser.cmo eval.cmo main.cmo
+rm lexer.cmi
+rm lexer.cmo
+rm lexer.ml
+rm main.cmi
+rm main.cmo
+rm parser.cmi
+rm parser.cmo
+rm parser.ml
+rm parser.mli
+rm syntax.cmi
+rm syntax.cmo
+rm eval.cmi
+rm eval.cmo
+./msnl
